@@ -1,0 +1,8 @@
+Exp_5_TCP/client.c: PASS
+Exp_5_TCP/server.c: PASS
+Exp_6_UDP/client.c: PASS
+Exp_6_UDP/server.c: PASS
+Exp_7_Multi_User_Chat_TCP/client.c: PASS
+Exp_7_Multi_User_Chat_TCP/server.c: PASS
+Exp_8_Concurrent_UDP_Time_Server/client.c: PASS
+Exp_8_Concurrent_UDP_Time_Server/server.c: PASS
