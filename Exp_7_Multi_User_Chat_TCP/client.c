@@ -2,15 +2,28 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 
+#define BUFFER_SIZE 4096
+
+static int send_all(int fd, const char *data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        ssize_t n = send(fd, data + sent, len - sent, 0);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return -1;
+        sent += (size_t)n;
+    }
+    return 0;
+}
+
 int main(void) {
     int sock;
     struct sockaddr_in server;
-    char name[64], input[1024], received[2048];
-    char recv_buffer[4096];
+    char name[64], input[1024], recv_buffer[BUFFER_SIZE];
     size_t used = 0;
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -27,31 +40,28 @@ int main(void) {
         return 1;
     }
 
-    printf("Connected to chat server.\n");
-    printf("Enter your name: ");
+    printf("Connected to chat server.\nEnter your name: ");
     fflush(stdout);
-    if (!fgets(name, sizeof(name), stdin)) {
-        close(sock);
-        return 1;
-    }
+    if (!fgets(name, sizeof(name), stdin)) { close(sock); return 1; }
     name[strcspn(name, "\r\n")] = '\0';
-    if (send(sock, name, strlen(name) + 1, 0) <= 0) {
+    if (send_all(sock, name, strlen(name) + 1) < 0) {
         perror("send");
         close(sock);
         return 1;
     }
 
     printf("You are now connected as %s.\n", name);
-    printf("Type your message and press Enter.\n");
-    printf("Type 'exit' to quit.\n");
+    printf("Type your message and press Enter.\nType 'exit' to quit.\n");
 
     while (1) {
         fd_set readfds;
-        int maxfd = sock;
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
         FD_SET(STDIN_FILENO, &readfds);
-        if (select(maxfd + 1, &readfds, NULL, NULL, NULL) < 0) {
+
+        if (select((sock > STDIN_FILENO ? sock : STDIN_FILENO) + 1,
+                   &readfds, NULL, NULL, NULL) < 0) {
+            if (errno == EINTR) continue;
             perror("select");
             break;
         }
@@ -59,7 +69,7 @@ int main(void) {
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             if (!fgets(input, sizeof(input), stdin)) break;
             input[strcspn(input, "\r\n")] = '\0';
-            if (send(sock, input, strlen(input) + 1, 0) <= 0) break;
+            if (send_all(sock, input, strlen(input) + 1) < 0) break;
             if (strcmp(input, "exit") == 0) {
                 printf("Disconnected from server.\n");
                 break;
@@ -67,27 +77,23 @@ int main(void) {
         }
 
         if (FD_ISSET(sock, &readfds)) {
-            ssize_t n = recv(sock, recv_buffer + used, sizeof(recv_buffer) - used - 1, 0);
+            char chunk[1024];
+            ssize_t n = recv(sock, chunk, sizeof(chunk), 0);
             if (n <= 0) {
                 printf("Disconnected from server.\n");
                 break;
             }
-            used += (size_t)n;
-            recv_buffer[used] = '\0';
-
-            char *start = recv_buffer;
-            char *end;
-            while ((end = memchr(start, '\0', (size_t)(recv_buffer + used - start))) != NULL) {
-                size_t len = (size_t)(end - start);
-                if (len >= sizeof(received)) len = sizeof(received) - 1;
-                memcpy(received, start, len);
-                received[len] = '\0';
-                printf("%s\n", received);
-                start = end + 1;
+            for (ssize_t i = 0; i < n; i++) {
+                if (chunk[i] == '\0') {
+                    recv_buffer[used] = '\0';
+                    printf("%s\n", recv_buffer);
+                    used = 0;
+                } else if (used < sizeof(recv_buffer) - 1) {
+                    recv_buffer[used++] = chunk[i];
+                } else {
+                    used = 0;
+                }
             }
-            used = (size_t)(recv_buffer + used - start);
-            memmove(recv_buffer, start, used);
-            if (used >= sizeof(recv_buffer) - 1) used = 0;
         }
     }
 
